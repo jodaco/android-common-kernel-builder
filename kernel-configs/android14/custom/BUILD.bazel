@@ -1,0 +1,1 @@
+exports_files(["syzbot2ftrace_defconfig"])

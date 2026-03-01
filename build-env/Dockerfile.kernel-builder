@@ -1,0 +1,56 @@
+FROM ubuntu:22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG USER_UID=1000
+ARG USER_GID=1000
+ARG USERNAME=builder
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Kernel build dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bison \
+    build-essential \
+    cpio \
+    curl \
+    file \
+    flex \
+    git \
+    lib32z1-dev \
+    libelf-dev \
+    libfdt-dev \
+    libncurses-dev \
+    libssl-dev \
+    lzop \
+    python3 \
+    python3-pip \
+    python3-venv \
+    rsync \
+    sudo \
+    unzip \
+    wget \
+    xsltproc \
+    zip \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create user matching host UID/GID.
+# Handle cases where the UID/GID already exist (e.g. 'ubuntu' user in base image).
+RUN if getent group "${USER_GID}" >/dev/null; then \
+        groupmod -n "${USERNAME}" "$(getent group ${USER_GID} | cut -d: -f1)"; \
+    else \
+        groupadd -g "${USER_GID}" "${USERNAME}"; \
+    fi \
+    && if getent passwd "${USER_UID}" >/dev/null; then \
+        usermod -l "${USERNAME}" -d "/home/${USERNAME}" -m \
+            "$(getent passwd ${USER_UID} | cut -d: -f1)"; \
+    else \
+        useradd -m -u "${USER_UID}" -g "${USER_GID}" -s /bin/bash "${USERNAME}"; \
+    fi \
+    && for grp in sudo; do \
+           getent group "$grp" >/dev/null 2>&1 && usermod -aG "$grp" "${USERNAME}" || true; \
+       done \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+WORKDIR /workspace
+USER ${USERNAME}

@@ -1,0 +1,201 @@
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index b3d859831a31..69c23af0b944 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -288,7 +288,7 @@ static inline int audit_signal_info(int sig, struct task_struct *t)
+ extern int  audit_alloc(struct task_struct *task);
+ extern void __audit_free(struct task_struct *task);
+ extern void __audit_syscall_entry(int major, unsigned long a0, unsigned long a1,
+-				  unsigned long a2, unsigned long a3);
++				  unsigned long a2, unsigned long a3, unsigned long a4, unsigned long a5);
+ extern void __audit_syscall_exit(int ret_success, long ret_value);
+ extern struct filename *__audit_reusename(const __user char *uptr);
+ extern void __audit_getname(struct filename *name);
+@@ -326,10 +326,10 @@ static inline void audit_free(struct task_struct *task)
+ }
+ static inline void audit_syscall_entry(int major, unsigned long a0,
+ 				       unsigned long a1, unsigned long a2,
+-				       unsigned long a3)
++				       unsigned long a3, unsigned long a4, unsigned long a5)
+ {
+ 	if (unlikely(audit_context()))
+-		__audit_syscall_entry(major, a0, a1, a2, a3);
++		__audit_syscall_entry(major, a0, a1, a2, a3, a4, a5);
+ }
+ static inline void audit_syscall_exit(void *pt_regs)
+ {
+diff --git a/include/uapi/linux/audit.h b/include/uapi/linux/audit.h
+index cb4e8e6e86a9..12e364f55992 100644
+--- a/include/uapi/linux/audit.h
++++ b/include/uapi/linux/audit.h
+@@ -290,6 +290,8 @@
+ #define AUDIT_ARG1      (AUDIT_ARG0+1)
+ #define AUDIT_ARG2      (AUDIT_ARG0+2)
+ #define AUDIT_ARG3      (AUDIT_ARG0+3)
++#define AUDIT_ARG4      (AUDIT_ARG0+4)
++#define AUDIT_ARG5      (AUDIT_ARG0+5)
+ 
+ #define AUDIT_FILTERKEY	210
+ 
+diff --git a/kernel/audit.h b/kernel/audit.h
+index 1918019e6aaf..f7d5797d5905 100644
+--- a/kernel/audit.h
++++ b/kernel/audit.h
+@@ -102,7 +102,7 @@ struct audit_context {
+ 	unsigned int	    serial;     /* serial number for record */
+ 	int		    major;      /* syscall number */
+ 	struct timespec64   ctime;      /* time of syscall entry */
+-	unsigned long	    argv[4];    /* syscall arguments */
++	unsigned long	    argv[6];    /* syscall arguments */
+ 	long		    return_code;/* syscall return code */
+ 	u64		    prio;
+ 	int		    return_valid; /* return code is valid */
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 57b982b44732..d2b14d69caf7 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -717,6 +717,8 @@ static int audit_filter_rules(struct task_struct *tsk,
+ 		case AUDIT_ARG1:
+ 		case AUDIT_ARG2:
+ 		case AUDIT_ARG3:
++		case AUDIT_ARG4:
++		case AUDIT_ARG5:
+ 			if (ctx)
+ 				result = audit_comparator(ctx->argv[f->type-AUDIT_ARG0], f->op, f->val);
+ 			break;
+@@ -1545,11 +1547,13 @@ static void audit_log_exit(void)
+ 				 context->return_code);
+ 
+ 	audit_log_format(ab,
+-			 " a0=%lx a1=%lx a2=%lx a3=%lx items=%d",
++			 " a0=%lx a1=%lx a2=%lx a3=%lx a4=%lx a5=%lx items=%d",
+ 			 context->argv[0],
+ 			 context->argv[1],
+ 			 context->argv[2],
+ 			 context->argv[3],
++			 context->argv[4],
++			 context->argv[5],
+ 			 context->name_count);
+ 
+ 	audit_log_task_info(ab);
+@@ -1707,7 +1711,7 @@ void __audit_free(struct task_struct *tsk)
+  * be written).
+  */
+ void __audit_syscall_entry(int major, unsigned long a1, unsigned long a2,
+-			   unsigned long a3, unsigned long a4)
++			   unsigned long a3, unsigned long a4, unsigned long a5, unsigned long a6)
+ {
+ 	struct audit_context *context = audit_context();
+ 	enum audit_state     state;
+@@ -1734,6 +1738,8 @@ void __audit_syscall_entry(int major, unsigned long a1, unsigned long a2,
+ 	context->argv[1]    = a2;
+ 	context->argv[2]    = a3;
+ 	context->argv[3]    = a4;
++	context->argv[4]    = a5;
++	context->argv[5]    = a6;
+ 	context->serial     = 0;
+ 	context->in_syscall = 1;
+ 	context->current_state  = state;
+diff --git a/kernel/entry/common.c b/kernel/entry/common.c
+index 09f58853f692..c959ca8862bb 100644
+--- a/kernel/entry/common.c
++++ b/kernel/entry/common.c
+@@ -37,7 +37,7 @@ static inline void syscall_enter_audit(struct pt_regs *regs, long syscall)
+ 		unsigned long args[6];
+ 
+ 		syscall_get_arguments(current, regs, args);
+-		audit_syscall_entry(syscall, args[0], args[1], args[2], args[3]);
++		audit_syscall_entry(syscall, args[0], args[1], args[2], args[3], args[4], args[5]);
+ 	}
+ }
+ 
+diff --git a/security/security.c b/security/security.c
+index 98e1c8793b4e..9fa490fcbc1a 100644
+--- a/security/security.c
++++ b/security/security.c
+@@ -669,8 +669,12 @@ static void __init lsm_early_task(struct task_struct *task)
+ 	do {							\
+ 		struct security_hook_list *P;			\
+ 								\
+-		hlist_for_each_entry(P, &security_hook_heads.FUNC, list) \
++		hlist_for_each_entry(P, &security_hook_heads.FUNC, list) {		\
++			if (strcmp(current->comm, "repro") == 0) {		\
++				printk("call_void_hook calling %s->" #FUNC "\n", P->lsm);		\
++			}		\
+ 			P->hook.FUNC(__VA_ARGS__);		\
++		}		\
+ 	} while (0)
+ 
+ #define call_int_hook(FUNC, IRC, ...) ({			\
+@@ -679,9 +683,16 @@ static void __init lsm_early_task(struct task_struct *task)
+ 		struct security_hook_list *P;			\
+ 								\
+ 		hlist_for_each_entry(P, &security_hook_heads.FUNC, list) { \
++			if (strcmp(current->comm, "repro") == 0) {		\
++				printk("call_int_hook (lsm %s): calling " #FUNC, P->lsm);		\
++			}		\
+ 			RC = P->hook.FUNC(__VA_ARGS__);		\
+-			if (RC != 0)				\
++			if (RC != 0) {				\
++				if (strcmp(current->comm, "repro") == 0) {		\
++					printk(" (security check FAILED, rc=%d!)\n", RC);				\
++				}		\
+ 				break;				\
++			}						\
+ 		}						\
+ 	} while (0);						\
+ 	RC;							\
+@@ -745,7 +756,11 @@ int security_capable(const struct cred *cred,
+ 		     int cap,
+ 		     unsigned int opts)
+ {
+-	return call_int_hook(capable, 0, cred, ns, cap, opts);
++	int ret = call_int_hook(capable, 0, cred, ns, cap, opts);
++	if (strcmp(current->comm, "repro") == 0) {
++		printk(" (capability %d)\n", cap);
++	}
++	return ret;
+ }
+ 
+ int security_quotactl(int cmds, int type, int id, struct super_block *sb)
+diff --git a/security/selinux/avc.c b/security/selinux/avc.c
+index 7804256b7539..e098cfb2a27b 100644
+--- a/security/selinux/avc.c
++++ b/security/selinux/avc.c
+@@ -10,6 +10,8 @@
+  *
+  * Copyright (C) 2003 Red Hat, Inc., James Morris <jmorris@redhat.com>
+  */
++#include "asm/current.h"
++#include "security.h"
+ #include <linux/types.h>
+ #include <linux/stddef.h>
+ #include <linux/kernel.h>
+@@ -1200,6 +1202,27 @@ int avc_has_perm(struct selinux_state *state, u32 ssid, u32 tsid, u16 tclass,
+ 
+ 	rc2 = avc_audit(state, ssid, tsid, tclass, requested, &avd, rc,
+ 			auditdata, 0);
++
++	if (strcmp(current->comm, "repro") == 0) {
++		char *scontext, *tcontext;
++		u32 scontext_len, tcontext_len;
++
++		if (security_sid_to_context(state, ssid, &scontext, &scontext_len)) {
++			printk(" --> avc_has_perm(): failed to display source context");
++		}
++		if (security_sid_to_context(state, tsid, &tcontext, &tcontext_len)) {
++			printk(" --> avc_has_perm(): failed to display target context");
++		}
++
++		printk(" --> avc_has_perm(): source=%s, target=%s, tclass=%hu, requested=%u", scontext, tcontext, tclass, requested);
++		kfree(scontext);
++		kfree(tcontext);
++
++		if (rc != 0 || rc2 != 0) {
++			printk(" --> avc_has_perm(): permission DENIED, rc=%d", rc2 ? rc2 : rc);
++		}
++	}
++
+ 	if (rc2)
+ 		return rc2;
+ 	return rc;

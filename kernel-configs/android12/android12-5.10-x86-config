@@ -1,0 +1,64 @@
+KERNEL_DIR=common
+
+. ${ROOT_DIR}/${KERNEL_DIR}/build.config.gki.x86_64
+
+# Relax KMI enforcement
+KMI_ENFORCED=0
+TRIM_NONLISTED_KMI=0
+KMI_SYMBOL_LIST_STRICT_MODE=0
+
+# Cuttlefish virtual device support
+BUILD_INITRAMFS=1
+EXT_MODULES="common-modules/virtual-device"
+LZ4_RAMDISK=1
+BUILD_GOLDFISH_DRIVERS=m
+MODULES_OPTIONS="options mac80211_hwsim radios=0"
+
+POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} && update_syzbot2ftrace_config"
+
+function update_syzbot2ftrace_config() {
+  # Merge virtual device module kconfig fragment
+  KCONFIG_CONFIG=${OUT_DIR}/.config \
+    ${ROOT_DIR}/${KERNEL_DIR}/scripts/kconfig/merge_config.sh -m -r \
+    ${OUT_DIR}/.config \
+    ${ROOT_DIR}/common-modules/virtual-device/virtual_device.fragment
+
+  # KASAN + debug + syzkaller config
+  ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
+    -e CONFIG_KASAN \
+    -e CONFIG_KASAN_GENERIC \
+    -e CONFIG_KASAN_OUTLINE \
+    -e CONFIG_KCOV \
+    -e CONFIG_KCOV_INSTRUMENT_ALL \
+    -e CONFIG_KCOV_ENABLE_COMPARISONS \
+    -e CONFIG_DEBUG_INFO \
+    -d CONFIG_RANDOMIZE_BASE \
+    -e CONFIG_SLUB \
+    -e CONFIG_SLUB_DEBUG \
+    -d CONFIG_SLUB_DEBUG_ON \
+    -d CONFIG_SLUB_DEBUG_PANIC_ON \
+    -e CONFIG_DEBUG_FS \
+    -e CONFIG_KALLSYMS \
+    -e CONFIG_KALLSYMS_ALL \
+    -e CONFIG_CONFIGFS_FS \
+    -e CONFIG_SECURITYFS \
+    -e CONFIG_FAULT_INJECTION \
+    -e CONFIG_FAULT_INJECTION_DEBUG_FS \
+    -e CONFIG_FAULT_INJECTION_USERCOPY \
+    -e CONFIG_FAILSLAB \
+    -e CONFIG_FAIL_PAGE_ALLOC \
+    -e CONFIG_FAIL_MAKE_REQUEST \
+    -e CONFIG_FAIL_IO_TIMEOUT \
+    -e CONFIG_FAIL_FUTEX \
+    -e CONFIG_USB_RAW_GADGET \
+    -e CONFIG_CHECKPOINT_RESTORE \
+    --set-val CONFIG_FRAME_WARN 0 \
+    -d LTO_CLANG_THIN \
+    -d LTO_CLANG_FULL \
+    -d CFI_PERMISSIVE \
+    -d CFI_CLANG \
+    -d SHADOW_CALL_STACK
+
+  (cd ${OUT_DIR} && \
+   make ${CC_LD_ARG} O=${OUT_DIR} olddefconfig)
+}

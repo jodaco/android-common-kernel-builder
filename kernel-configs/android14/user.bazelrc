@@ -1,0 +1,4 @@
+build:custom --lto=none
+build:custom --notrim
+build:custom --nokmi_symbol_list_strict_mode
+build:custom --defconfig_fragment=//custom:syzbot2ftrace_defconfig

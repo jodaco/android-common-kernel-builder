@@ -1,0 +1,6 @@
+.vscode
+.claude
+*pycache*
+.cf*
+*.zip
+*.tar.gz
